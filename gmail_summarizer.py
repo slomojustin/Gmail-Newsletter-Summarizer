@@ -10,7 +10,7 @@ import os
 import base64
 import json
 import email
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -65,11 +65,25 @@ def get_gmail_service():
     return build('gmail', 'v1', credentials=creds)
 
 
-def get_today_date_query():
-    """Get Gmail query string for today's date."""
-    today = date.today()
+def get_date_query(days_back=0):
+    """Get Gmail query string for a specific date.
+    
+    Args:
+        days_back: Number of days ago (0 = today, 1 = yesterday, 2 = day before)
+    
+    Returns:
+        Gmail query string for that date
+    """
+    target_date = date.today() - timedelta(days=days_back)
     # Gmail uses YYYY/MM/DD format
-    return f"after:{today.year}/{today.month:02d}/{today.day:02d}"
+    return f"after:{target_date.year}/{target_date.month:02d}/{target_date.day:02d} before:{(target_date + timedelta(days=1)).year}/{(target_date + timedelta(days=1)).month:02d}/{(target_date + timedelta(days=1)).day:02d}"
+
+
+def get_recent_dates_query():
+    """Get Gmail query string for today, yesterday, and day before."""
+    day_before_yesterday = date.today() - timedelta(days=2)
+    # Gmail query: after day_before_yesterday (includes today, yesterday, day before)
+    return f"after:{day_before_yesterday.year}/{day_before_yesterday.month:02d}/{day_before_yesterday.day:02d}"
 
 
 def extract_email_body(message):
@@ -120,8 +134,8 @@ def get_email_headers(message):
 
 
 def fetch_todays_newsletters(service):
-    """Fetch today's emails from Newsletters label."""
-    query = f"label:{LABEL_NAME} {get_today_date_query()}"
+    """Fetch recent emails (today, yesterday, day before) from Newsletters label."""
+    query = f"label:{LABEL_NAME} {get_recent_dates_query()}"
     
     try:
         results = service.users().messages().list(
@@ -133,10 +147,10 @@ def fetch_todays_newsletters(service):
         messages = results.get('messages', [])
         
         if not messages:
-            print(f"No newsletters found for today ({date.today()}).")
+            print(f"No newsletters found for recent days (today, yesterday, day before).")
             return []
         
-        print(f"Found {len(messages)} newsletter(s) for today.")
+        print(f"Found {len(messages)} newsletter(s) from recent days.")
         
         # Fetch full message details
         email_data = []
@@ -189,21 +203,51 @@ Provide a brief summary (2-3 sentences) highlighting the key points."""
             model=model_name,
             contents=prompt,
             config=genai.types.GenerateContentConfig(
-                max_output_tokens=200,
+                max_output_tokens=2000,  # Increased to avoid truncation
                 temperature=0.7,
             )
         )
         
-        # Debug: Check what the response object contains
-        # The new API might return text differently
-        if hasattr(response, 'text') and response.text:
-            return response.text.strip()
-        elif hasattr(response, 'candidates') and response.candidates:
-            # Try accessing through candidates (common in Gemini API)
-            return response.candidates[0].content.parts[0].text.strip()
-        else:
-            # Fallback: convert response to string
-            return str(response)
+        # Check finish_reason to understand response status
+        finish_reason = None
+        if hasattr(response, 'candidates') and response.candidates and len(response.candidates) > 0:
+            finish_reason = getattr(response.candidates[0], 'finish_reason', None)
+            if finish_reason and str(finish_reason) == 'FinishReason.MAX_TOKENS':
+                print(f"    [WARNING] Response hit MAX_TOKENS limit - may be incomplete")
+        
+        # Check finish_reason - if MAX_TOKENS, we might have a truncated or None response
+        finish_reason = None
+        if hasattr(response, 'candidates') and response.candidates and len(response.candidates) > 0:
+            finish_reason = getattr(response.candidates[0], 'finish_reason', None)
+            if finish_reason and str(finish_reason) == 'FinishReason.MAX_TOKENS':
+                print(f"    [DEBUG] WARNING: Hit MAX_TOKENS - response may be incomplete")
+        
+        # Extract text from response
+        # Primary: try response.text (most common)
+        if hasattr(response, 'text') and response.text is not None:
+            text = response.text.strip()
+            if text:  # Make sure it's not empty
+                # If we hit MAX_TOKENS, add a note
+                if finish_reason and str(finish_reason) == 'FinishReason.MAX_TOKENS':
+                    return text + " [Summary may be truncated due to length]"
+                return text
+        
+        # Fallback: try candidates path
+        if hasattr(response, 'candidates') and response.candidates and len(response.candidates) > 0:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                # Check if parts exists and is not None
+                if hasattr(candidate.content, 'parts'):
+                    parts = candidate.content.parts
+                    if parts is not None and len(parts) > 0:
+                        part = parts[0]
+                        if hasattr(part, 'text') and part.text:
+                            text = part.text.strip()
+                            if text:  # Make sure it's not empty
+                                return text
+        
+        # If all else fails, return error message
+        return f"Error: Could not extract text from response"
     
     except Exception as e:
         print(f"Error summarizing email: {e}")
@@ -287,8 +331,8 @@ def main():
     service = get_gmail_service()
     print("Authentication successful!")
     
-    # Fetch today's newsletters
-    print(f"\nFetching today's newsletters from '{LABEL_NAME}' label...")
+    # Fetch recent newsletters (today, yesterday, day before)
+    print(f"\nFetching recent newsletters (today, yesterday, day before) from '{LABEL_NAME}' label...")
     emails = fetch_todays_newsletters(service)
     
     if not emails:
