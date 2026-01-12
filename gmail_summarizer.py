@@ -2,7 +2,7 @@
 """
 Gmail Newsletter Summarizer
 
-Fetches today's emails from the 'Newsletters' label, summarizes each with Google Gemini,
+Fetches recent emails from the 'Newsletters' label, summarizes each with Hugging Face,
 and emails a markdown digest to the user.
 """
 
@@ -20,7 +20,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from google import genai
+from huggingface_hub import InferenceClient
 from dateutil import tz
 
 
@@ -32,7 +32,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
 CREDENTIALS_FILE = 'credentials.json'
 TOKEN_FILE = 'token.json'
 LABEL_NAME = 'Newsletters'
-GEMINI_MODEL = 'models/gemini-flash-latest'
+HF_MODEL = 'sshleifer/distilbart-cnn-12-6'  # Summarization model (faster than BART-large)
 
 
 def get_gmail_service():
@@ -183,74 +183,106 @@ def fetch_todays_newsletters(service):
         return []
 
 
-def summarize_email(client, model_name, subject, from_addr, body):
-    """Summarize email content using Google Gemini."""
-    # Limit body length to avoid token limits
-    body_preview = body[:4000]
+def summarize_email(client, subject, from_addr, body):
+    """Summarize email content using Hugging Face API.
     
-    prompt = f"""Please provide a concise summary of this newsletter email.
+    For long emails, chunks the text and processes ~50% of characters (every other chunk).
+    """
+    
+    # Model token limit is ~1024 tokens (~4000 chars), use 2000 to be safe
+    MAX_LENGTH = 2000
+    CHUNK_SIZE = 2000  # Characters per chunk
+    OVERLAP = 200  # Overlap between chunks to preserve context
+    
+    def try_summarize(text_to_summarize):
+        """Helper to summarize text and return summary or None."""
+        try:
+            response = client.summarization(text_to_summarize)
+            
+            # Extract summary from response
+            if response and hasattr(response, 'summary_text'):
+                return response.summary_text.strip()
+            elif isinstance(response, dict) and 'summary_text' in response:
+                return response['summary_text'].strip()
+            elif isinstance(response, str):
+                return response.strip()
+            return None
+        except Exception as e:
+            return None
+    
+    def format_text(body_text):
+        """Format text for summarization."""
+        return f"""Newsletter Email
 
 From: {from_addr}
 Subject: {subject}
 
-Content:
-{body_preview}
-
-Provide a brief summary (2-3 sentences) highlighting the key points."""
+{body_text}"""
     
     try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=genai.types.GenerateContentConfig(
-                max_output_tokens=2000,  # Increased to avoid truncation
-                temperature=0.7,
-            )
-        )
+        # For short emails, summarize directly
+        if len(body) <= MAX_LENGTH:
+            print(f"    [Email length: {len(body)} chars, summarizing...]", end='', flush=True)
+            text_to_summarize = format_text(body)
+            summary = try_summarize(text_to_summarize)
+            if summary:
+                print(f" ✓ ({len(summary)} chars)")
+                return summary
+            print(f" ✗")
+            return "Error: Could not generate summary"
         
-        # Check finish_reason to understand response status
-        finish_reason = None
-        if hasattr(response, 'candidates') and response.candidates and len(response.candidates) > 0:
-            finish_reason = getattr(response.candidates[0], 'finish_reason', None)
-            if finish_reason and str(finish_reason) == 'FinishReason.MAX_TOKENS':
-                print(f"    [WARNING] Response hit MAX_TOKENS limit - may be incomplete")
+        # For long emails, chunk and process every other chunk (~50% coverage)
+        print(f"    [Long email ({len(body)} chars), chunking and processing ~50%...]")
         
-        # Check finish_reason - if MAX_TOKENS, we might have a truncated or None response
-        finish_reason = None
-        if hasattr(response, 'candidates') and response.candidates and len(response.candidates) > 0:
-            finish_reason = getattr(response.candidates[0], 'finish_reason', None)
-            if finish_reason and str(finish_reason) == 'FinishReason.MAX_TOKENS':
-                print(f"    [DEBUG] WARNING: Hit MAX_TOKENS - response may be incomplete")
+        # Split into chunks with overlap
+        chunks = []
+        start = 0
+        while start < len(body):
+            end = min(start + CHUNK_SIZE, len(body))
+            chunk = body[start:end]
+            if chunk.strip():
+                chunks.append(chunk)
+            # Move to next chunk with overlap
+            start = end - OVERLAP
+            if start >= len(body):
+                break
         
-        # Extract text from response
-        # Primary: try response.text (most common)
-        if hasattr(response, 'text') and response.text is not None:
-            text = response.text.strip()
-            if text:  # Make sure it's not empty
-                # If we hit MAX_TOKENS, add a note
-                if finish_reason and str(finish_reason) == 'FinishReason.MAX_TOKENS':
-                    return text + " [Summary may be truncated due to length]"
-                return text
+        if not chunks:
+            return "Error: Could not split email into chunks"
         
-        # Fallback: try candidates path
-        if hasattr(response, 'candidates') and response.candidates and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'content') and candidate.content:
-                # Check if parts exists and is not None
-                if hasattr(candidate.content, 'parts'):
-                    parts = candidate.content.parts
-                    if parts is not None and len(parts) > 0:
-                        part = parts[0]
-                        if hasattr(part, 'text') and part.text:
-                            text = part.text.strip()
-                            if text:  # Make sure it's not empty
-                                return text
+        # Process every other chunk (0, 2, 4, 6, etc.) to get ~50% coverage
+        selected_indices = list(range(0, len(chunks), 2))
+        selected_chunk_nums = [i+1 for i in selected_indices]  # 1-indexed for display
         
-        # If all else fails, return error message
-        return f"Error: Could not extract text from response"
+        total_chars_processed = sum(len(chunks[i]) for i in selected_indices)
+        coverage_pct = (total_chars_processed / len(body)) * 100
+        
+        print(f"    [Split into {len(chunks)} chunk(s), processing {len(selected_indices)} chunks ({coverage_pct:.0f}% coverage): {', '.join(map(str, selected_chunk_nums))}]")
+        
+        # Summarize selected chunks
+        chunk_summaries = []
+        for i, chunk_idx in enumerate(selected_indices):
+            chunk = chunks[chunk_idx]
+            chunk_num = chunk_idx + 1  # 1-indexed for display
+            print(f"    [Chunk {chunk_num}/{len(chunks)}: Processing... ({len(chunk)} chars)]", end='', flush=True)
+            text_to_summarize = format_text(chunk)
+            summary = try_summarize(text_to_summarize)
+            if summary:
+                chunk_summaries.append(summary)
+                print(f" ✓ ({len(summary)} chars)")
+            else:
+                print(f" ✗")
+        
+        # Combine all chunk summaries
+        if chunk_summaries:
+            combined = " ".join(chunk_summaries)
+            print(f"    [Combined summary from {len(chunk_summaries)} chunks: {len(combined)} chars]")
+            return combined
+        else:
+            return "Error: Could not generate any chunk summaries"
     
     except Exception as e:
-        print(f"Error summarizing email: {e}")
+        print(f" ✗ (error: {str(e)[:100]})")
         return f"Error generating summary: {str(e)}"
 
 
@@ -314,17 +346,16 @@ def main():
     print("Gmail Newsletter Summarizer")
     print("=" * 40)
     
-    # Check for Gemini API key
-    gemini_api_key = os.getenv('GEMINI_API_KEY')
-    if not gemini_api_key:
-        raise ValueError(
-            "GEMINI_API_KEY environment variable not set. "
-            "Please set it with: export GEMINI_API_KEY=AIzaSyAG0j4Uhq1D_xiZqI26XTrSq02rdNFRGjU"
-        )
+    # Check for Hugging Face API key (optional - some models work without it)
+    hf_api_key = os.getenv('HF_API_KEY') or os.getenv('HUGGINGFACE_API_KEY')
     
-    # Initialize Gemini model
-    client = genai.Client(api_key=gemini_api_key)
-    gemini_model = GEMINI_MODEL
+    # Initialize Hugging Face client
+    # Note: Some models work without API key, but having one increases rate limits
+    if hf_api_key:
+        client = InferenceClient(model=HF_MODEL, token=hf_api_key)
+    else:
+        print("Warning: No HF_API_KEY set. Using public API (may have lower rate limits).")
+        client = InferenceClient(model=HF_MODEL)
     
     # Authenticate Gmail
     print("Authenticating with Gmail API...")
@@ -340,18 +371,20 @@ def main():
         return
     
     # Summarize each email
-    print(f"\nSummarizing {len(emails)} newsletter(s) with Google Gemini...")
+    print(f"\nSummarizing {len(emails)} newsletter(s) with Hugging Face...")
     summaries = []
     for i, email_data in enumerate(emails, 1):
-        print(f"  [{i}/{len(emails)}] Summarizing: {email_data['subject'][:50]}...")
+        body_len = len(email_data['body'])
+        print(f"\n  [{i}/{len(emails)}] {email_data['subject'][:50]}...")
+        print(f"       Body length: {body_len} chars")
         summary = summarize_email(
             client,
-            gemini_model,
             email_data['subject'],
             email_data['from'],
             email_data['body']
         )
         summaries.append(summary)
+        print(f"       Summary length: {len(summary)} chars")
     
     # Create markdown digest
     print("\nCreating markdown digest...")

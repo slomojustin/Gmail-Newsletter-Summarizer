@@ -1,6 +1,6 @@
 # Newsletter Digest - 2026-01-05
 
-*Generated on 2026-01-05 21:00:33*
+*Generated on 2026-01-05 21:40:46*
 
 ---
 
@@ -11,7 +11,7 @@
 **Date:** Tue, 06 Jan 2026 01:30:43 +0000 (UTC)
 
 **Summary:**
-The newsletter primarily discusses the $450 million funding round secured by Oishii, a Berkeley-founded vertical farming company, which found success by focusing on high-premium, expensive Japanese strawberries to overcome challenging unit economics. Separately, it analyzes US-China dynamics, noting increasing global polarization and emphasizing that China is winning the critical power race, suggesting that energy ("power is the new oil") is now the most crucial global resource.
+Oishii is a vertical farming company founded by Haas MBA. They went premium from day one with strawberries, and not just any strawberries. These reportedly retail for around $2–6 per berry versus around $0.20–0.50 for typical supermarket strawberries.
 
 ---
 
@@ -22,7 +22,7 @@ The newsletter primarily discusses the $450 million funding round secured by Ois
 **Date:** Mon, 5 Jan 2026 22:10:50 +0000
 
 **Summary:**
-Error generating summary: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\nPlease retry in 27.114142413s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'model': 'gemini-2.5-flash', 'location': 'global'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '27s'}]}}
+Reflections from 2025: Job Adulthood 101. Five most interesting lessons and observations from year 1 in job adulthood. People’s perceptions of us quietly become mirrors for how we see ourselves. It is dangerously easy to conflate how you are observed professionally with your wisdom and sense of self.
 
 ---
 
@@ -33,7 +33,7 @@ Error generating summary: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'messa
 **Date:** Sun, 4 Jan 2026 21:35:35 +0000
 
 **Summary:**
-Error generating summary: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\nPlease retry in 26.922410264s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '26s'}]}}
+Investing, by definition, is a game of underestimations. Our job is to generate value by taking advantage of that underestimation. Most common investment mistakes come from overweighing others’ opinions on an investment. Underestimating the Influence of Consensus is the foundation for the rest of this essay.
 
 ---
 
@@ -44,7 +44,7 @@ Error generating summary: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'messa
 **Date:** Sun, 4 Jan 2026 12:57:19 +0000
 
 **Summary:**
-Error generating summary: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\nPlease retry in 26.750180301s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '26s'}]}}
+Claude Code was the signal most impactful AI tool developed in 2025 that will be significantly upgraded and refined in 2026. In 2025 and moving into 2026, Claude Code signifies a shift from "assistive" AI (think: simple autocomplete) to "agentic" AI. Claude Code fluency will equal the professional fundamental skills of agentic AI orchestration.
 
 ---
 
@@ -55,7 +55,7 @@ Error generating summary: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'messa
 **Date:** Sat, 3 Jan 2026 10:40:17 +0000
 
 **Summary:**
-Error generating summary: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\nPlease retry in 26.580933566s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '26s'}]}}
+The datacenter AI rollout for infrastructure is a global event. Demand for compute is rising exponentially. There are historical cycles of instructure build-outs that are comparable, that we can learn from. The AI Infrastructure wave is like nothing we’ve seen before. History can still be our guide.
 
 ---
 
