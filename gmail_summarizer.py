@@ -10,6 +10,7 @@ import os
 import base64
 import json
 import email
+import re
 from datetime import datetime, date, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -22,6 +23,9 @@ from googleapiclient.errors import HttpError
 
 from huggingface_hub import InferenceClient
 from dateutil import tz
+import requests
+from bs4 import BeautifulSoup
+import html2text
 
 
 # Gmail API scopes
@@ -32,7 +36,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
 CREDENTIALS_FILE = 'credentials.json'
 TOKEN_FILE = 'token.json'
 LABEL_NAME = 'Newsletters'
-HF_MODEL = 'sshleifer/distilbart-cnn-12-6'  # Summarization model (faster than BART-large)
+HF_MODEL = 'facebook/bart-large-cnn'  # Summarization model (high quality)
 
 
 def get_gmail_service():
@@ -183,103 +187,173 @@ def fetch_todays_newsletters(service):
         return []
 
 
-def summarize_email(client, subject, from_addr, body):
-    """Summarize email content using Hugging Face API.
+def extract_urls(text):
+    """Extract the main article URL from text (for Substack newsletters).
     
-    For long emails, chunks the text and processes ~50% of characters (every other chunk).
+    Looks for the main Substack article link. Substack emails often have redirect links
+    that point to the main article, so we look for the first substantial Substack link.
     """
+    # Pattern to match URLs
+    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+    urls = re.findall(url_pattern, text)
     
-    # Model token limit is ~1024 tokens (~4000 chars), use 2000 to be safe
-    MAX_LENGTH = 2000
-    CHUNK_SIZE = 2000  # Characters per chunk
-    OVERLAP = 200  # Overlap between chunks to preserve context
+    # Find Substack URLs
+    substack_urls = [url for url in urls if 'substack.com' in url.lower()]
     
-    def try_summarize(text_to_summarize):
-        """Helper to summarize text and return summary or None."""
-        try:
-            response = client.summarization(text_to_summarize)
-            
-            # Extract summary from response
-            if response and hasattr(response, 'summary_text'):
-                return response.summary_text.strip()
-            elif isinstance(response, dict) and 'summary_text' in response:
-                return response['summary_text'].strip()
-            elif isinstance(response, str):
-                return response.strip()
+    if not substack_urls:
+        return []
+    
+    # Strategy 1: Look for direct article links (format: https://[username].substack.com/p/[slug])
+    direct_article_urls = []
+    for url in substack_urls:
+        url_lower = url.lower()
+        # Must have /p/ (article path)
+        if '/p/' in url:
+            # Must NOT be a redirect link
+            if 'redirect' not in url_lower:
+                # Must be from a specific subdomain (not just substack.com)
+                if '.substack.com' in url:
+                    direct_article_urls.append(url)
+    
+    if direct_article_urls:
+        # Return the first direct article URL (usually the main one)
+        return [direct_article_urls[0]]
+    
+    # Strategy 2: If no direct links, try to extract from redirect links
+    # Substack redirect links often contain the target URL in the redirect parameter
+    for url in substack_urls:
+        if 'redirect' in url.lower():
+            # Try to extract the target URL from redirect parameter
+            # Format: https://substack.com/redirect/...?url=ENCODED_URL
+            match = re.search(r'[?&]url=([^&]+)', url)
+            if match:
+                # URL is usually base64 encoded or URL encoded
+                try:
+                    import urllib.parse
+                    decoded = urllib.parse.unquote(match.group(1))
+                    # Check if it's a Substack article URL
+                    if 'substack.com' in decoded and '/p/' in decoded:
+                        return [decoded]
+                except:
+                    pass
+    
+    # Strategy 3: Return the first Substack URL that looks like an article
+    # (even if it's a redirect, we'll try to follow it)
+    for url in substack_urls:
+        if '/p/' in url or 'substack.com/p/' in url.lower():
+            return [url]
+    
+    # Fallback: return first Substack URL
+    return [substack_urls[0]] if substack_urls else []
+
+
+def fetch_article_content(url):
+    """Fetch and extract article content from a URL, following redirects."""
+    try:
+        # Set headers to mimic a browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Follow redirects to get the final URL
+        response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+        response.raise_for_status()
+        
+        # If we got redirected, use the final URL
+        final_url = response.url
+        
+        # Parse HTML
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # For Substack articles, try to find the article content
+        # Substack typically uses <div class="post"> or similar
+        article_content = None
+        
+        # Try Substack-specific selectors
+        substack_selectors = [
+            'div[class*="post"]',
+            'article',
+            'div[class*="content"]',
+            'div[class*="body"]',
+            'div[class*="article"]'
+        ]
+        
+        for selector in substack_selectors:
+            article = soup.select_one(selector)
+            if article:
+                article_content = article
+                break
+        
+        # Fallback to body if no article found
+        if not article_content:
+            article_content = soup.find('body')
+        
+        if not article_content:
             return None
-        except Exception as e:
-            return None
+        
+        # Convert HTML to text
+        h = html2text.HTML2Text()
+        h.ignore_links = False
+        h.ignore_images = True
+        h.body_width = 0  # Don't wrap lines
+        
+        text = h.handle(str(article_content))
+        
+        # Clean up the text
+        text = re.sub(r'\n\s*\n', '\n\n', text)  # Remove excessive newlines
+        text = text.strip()
+        
+        return text if text else None
+        
+    except Exception as e:
+        print(f"        Error fetching {url}: {str(e)[:80]}")
+        return None
+
+
+def summarize_email(client, subject, from_addr, body):
+    """Summarize email content with a simple, straightforward approach."""
     
-    def format_text(body_text):
+    MAX_LENGTH = 2000  # Truncate long emails to this length
+    MAX_SUMMARY_LENGTH = 400  # Cap summary length for conciseness
+    
+    def format_text(content_text):
         """Format text for summarization."""
-        return f"""Newsletter Email
+        return f"""Email
 
 From: {from_addr}
 Subject: {subject}
 
-{body_text}"""
+{content_text}"""
     
     try:
-        # For short emails, summarize directly
-        if len(body) <= MAX_LENGTH:
-            print(f"    [Email length: {len(body)} chars, summarizing...]", end='', flush=True)
-            text_to_summarize = format_text(body)
-            summary = try_summarize(text_to_summarize)
-            if summary:
-                print(f" ✓ ({len(summary)} chars)")
-                return summary
-            print(f" ✗")
-            return "Error: Could not generate summary"
-        
-        # For long emails, chunk and process every other chunk (~50% coverage)
-        print(f"    [Long email ({len(body)} chars), chunking and processing ~50%...]")
-        
-        # Split into chunks with overlap
-        chunks = []
-        start = 0
-        while start < len(body):
-            end = min(start + CHUNK_SIZE, len(body))
-            chunk = body[start:end]
-            if chunk.strip():
-                chunks.append(chunk)
-            # Move to next chunk with overlap
-            start = end - OVERLAP
-            if start >= len(body):
-                break
-        
-        if not chunks:
-            return "Error: Could not split email into chunks"
-        
-        # Process every other chunk (0, 2, 4, 6, etc.) to get ~50% coverage
-        selected_indices = list(range(0, len(chunks), 2))
-        selected_chunk_nums = [i+1 for i in selected_indices]  # 1-indexed for display
-        
-        total_chars_processed = sum(len(chunks[i]) for i in selected_indices)
-        coverage_pct = (total_chars_processed / len(body)) * 100
-        
-        print(f"    [Split into {len(chunks)} chunk(s), processing {len(selected_indices)} chunks ({coverage_pct:.0f}% coverage): {', '.join(map(str, selected_chunk_nums))}]")
-        
-        # Summarize selected chunks
-        chunk_summaries = []
-        for i, chunk_idx in enumerate(selected_indices):
-            chunk = chunks[chunk_idx]
-            chunk_num = chunk_idx + 1  # 1-indexed for display
-            print(f"    [Chunk {chunk_num}/{len(chunks)}: Processing... ({len(chunk)} chars)]", end='', flush=True)
-            text_to_summarize = format_text(chunk)
-            summary = try_summarize(text_to_summarize)
-            if summary:
-                chunk_summaries.append(summary)
-                print(f" ✓ ({len(summary)} chars)")
-            else:
-                print(f" ✗")
-        
-        # Combine all chunk summaries
-        if chunk_summaries:
-            combined = " ".join(chunk_summaries)
-            print(f"    [Combined summary from {len(chunk_summaries)} chunks: {len(combined)} chars]")
-            return combined
+        # Truncate body if too long
+        if len(body) > MAX_LENGTH:
+            print(f"    [Email length: {len(body)} chars, truncating to {MAX_LENGTH} chars...]", end='', flush=True)
+            body = body[:MAX_LENGTH]
         else:
-            return "Error: Could not generate any chunk summaries"
+            print(f"    [Email length: {len(body)} chars, summarizing...]", end='', flush=True)
+        
+        # Format and summarize
+        text_to_summarize = format_text(body)
+        response = client.summarization(text_to_summarize)
+        
+        # Extract summary from response
+        if response and hasattr(response, 'summary_text'):
+            summary = response.summary_text.strip()
+        elif isinstance(response, dict) and 'summary_text' in response:
+            summary = response['summary_text'].strip()
+        elif isinstance(response, str):
+            summary = response.strip()
+        else:
+            print(f" ✗ (unexpected response format)")
+            return "Error: Could not extract summary from API response"
+        
+        # Cap summary length
+        if len(summary) > MAX_SUMMARY_LENGTH:
+            summary = summary[:MAX_SUMMARY_LENGTH].rsplit('.', 1)[0] + '.'
+        
+        print(f" ✓ ({len(summary)} chars)")
+        return summary
     
     except Exception as e:
         print(f" ✗ (error: {str(e)[:100]})")
@@ -410,6 +484,64 @@ def main():
     print("\nDone!")
 
 
+def create_test_email():
+    """Create a test email with content that will require exactly 3 chunks."""
+    # CHUNK_SIZE is 1500, so for 3 chunks we need ~4500 chars
+    test_content = """The Future of Artificial Intelligence in Healthcare
+
+Artificial intelligence is revolutionizing healthcare in unprecedented ways. Machine learning algorithms can now analyze medical images with greater accuracy than human radiologists in some cases. Deep learning models trained on millions of patient records can predict disease progression and recommend personalized treatment plans. Natural language processing enables AI systems to extract insights from unstructured medical notes and research papers.
+
+The integration of AI into clinical workflows is transforming how doctors diagnose and treat patients. Computer vision systems can detect early signs of cancer in medical scans that might be missed by the human eye. Predictive analytics help hospitals manage resources more efficiently and reduce patient wait times. AI-powered chatbots provide 24/7 patient support and triage services, helping to reduce the burden on healthcare staff.
+
+However, challenges remain in ensuring AI systems are trustworthy and equitable. Bias in training data can lead to disparities in care for different patient populations. Regulatory frameworks are still catching up with the rapid pace of AI development. Healthcare providers must balance the benefits of AI with concerns about patient privacy and data security. The future will require close collaboration between technologists, clinicians, and policymakers to ensure AI serves all patients effectively.
+
+As we look ahead, the potential for AI to improve global health outcomes is immense. From drug discovery to personalized medicine, AI is opening new frontiers in healthcare. The key will be developing these technologies responsibly, with a focus on augmenting human expertise rather than replacing it. The healthcare industry stands at an inflection point, where thoughtful implementation of AI could lead to better outcomes for patients worldwide.""" * 10  # Repeat to get ~7500 chars
+    
+    return {
+        'id': 'test_email_001',
+        'subject': 'Test Newsletter: The Future of AI in Healthcare',
+        'from': 'test@newsletter.com',
+        'date': datetime.now().strftime('%a, %d %b %Y %H:%M:%S %z'),
+        'body': test_content[:4500]  # Ensure exactly 3 chunks
+    }
+
+
 if __name__ == '__main__':
-    main()
+    import sys
+    
+    # Check if running in test mode
+    if len(sys.argv) > 1 and sys.argv[1] == '--test':
+        print("Gmail Newsletter Summarizer - TEST MODE")
+        print("=" * 40)
+        
+        hf_api_key = os.getenv('HF_API_KEY') or os.getenv('HUGGINGFACE_API_KEY')
+        if hf_api_key:
+            client = InferenceClient(model=HF_MODEL, token=hf_api_key)
+        else:
+            print("Warning: No HF_API_KEY set. Using public API (may have lower rate limits).")
+            client = InferenceClient(model=HF_MODEL)
+        
+        # Create test email
+        test_email = create_test_email()
+        print(f"\nTest Email: {test_email['subject']}")
+        print(f"From: {test_email['from']}")
+        print(f"Body length: {len(test_email['body'])} chars (should create ~3 chunks with CHUNK_SIZE=1500)\n")
+        print("=" * 40)
+        print("Generating summary...\n")
+        
+        summary = summarize_email(
+            client,
+            test_email['subject'],
+            test_email['from'],
+            test_email['body']
+        )
+        
+        print("\n" + "=" * 40)
+        print("FINAL SUMMARY:")
+        print("=" * 40)
+        print(summary)
+        print("=" * 40)
+        print(f"\nSummary length: {len(summary)} characters")
+    else:
+        main()
 
