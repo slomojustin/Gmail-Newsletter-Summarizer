@@ -311,49 +311,100 @@ def fetch_article_content(url):
 
 
 def summarize_email(client, subject, from_addr, body):
-    """Summarize email content with a simple, straightforward approach."""
+    """Summarize email content by taking first 3 chunks, summarizing each, then creating a connected final summary."""
     
-    MAX_LENGTH = 2000  # Truncate long emails to this length
-    MAX_SUMMARY_LENGTH = 400  # Cap summary length for conciseness
+    MAX_LENGTH = 2000  # For short emails, summarize directly
+    CHUNK_SIZE = 1500  # Size of each chunk
+    NUM_CHUNKS = 6  # Number of chunks to process from the beginning
+    CHUNK_SUMMARY_LENGTH = 250  # Chunk summaries should be 200-300 chars
+    MAX_SUMMARY_LENGTH = 600  # Cap final combined summary length
     
-    def format_text(content_text):
+    def format_text(content_text, section=""):
         """Format text for summarization."""
-        return f"""Email
+        section_label = f" ({section})" if section else ""
+        return f"""Email{section_label}
 
 From: {from_addr}
 Subject: {subject}
 
 {content_text}"""
     
+    def try_summarize(text_to_summarize, max_length=None):
+        """Helper to summarize text and return summary or None."""
+        try:
+            response = client.summarization(text_to_summarize)
+            
+            # Extract summary from response
+            if response and hasattr(response, 'summary_text'):
+                summary = response.summary_text.strip()
+            elif isinstance(response, dict) and 'summary_text' in response:
+                summary = response['summary_text'].strip()
+            elif isinstance(response, str):
+                summary = response.strip()
+            else:
+                return None
+            
+            # Cap summary length (use provided max_length or default)
+            cap_length = max_length if max_length else MAX_SUMMARY_LENGTH
+            if len(summary) > cap_length:
+                summary = summary[:cap_length].rsplit('.', 1)[0] + '.'
+            
+            return summary
+        except Exception as e:
+            return None
+    
     try:
-        # Truncate body if too long
-        if len(body) > MAX_LENGTH:
-            print(f"    [Email length: {len(body)} chars, truncating to {MAX_LENGTH} chars...]", end='', flush=True)
-            body = body[:MAX_LENGTH]
-        else:
+        # For short emails, summarize directly
+        if len(body) <= MAX_LENGTH:
             print(f"    [Email length: {len(body)} chars, summarizing...]", end='', flush=True)
+            text_to_summarize = format_text(body)
+            summary = try_summarize(text_to_summarize)
+            if summary:
+                print(f" ✓ ({len(summary)} chars)")
+                return summary
+            print(f" ✗")
+            return "Error: Could not generate summary"
         
-        # Format and summarize
-        text_to_summarize = format_text(body)
-        response = client.summarization(text_to_summarize)
+        # For long emails, take first 3 chunks
+        print(f"    [Long email ({len(body)} chars), taking first {NUM_CHUNKS} chunks...]")
         
-        # Extract summary from response
-        if response and hasattr(response, 'summary_text'):
-            summary = response.summary_text.strip()
-        elif isinstance(response, dict) and 'summary_text' in response:
-            summary = response['summary_text'].strip()
-        elif isinstance(response, str):
-            summary = response.strip()
-        else:
-            print(f" ✗ (unexpected response format)")
-            return "Error: Could not extract summary from API response"
+        # Split into chunks and take first NUM_CHUNKS
+        chunks = []
+        start = 0
+        for i in range(NUM_CHUNKS):
+            if start >= len(body):
+                break
+            end = min(start + CHUNK_SIZE, len(body))
+            chunk = body[start:end]
+            if chunk.strip():
+                chunks.append(chunk)
+            start = end
         
-        # Cap summary length
-        if len(summary) > MAX_SUMMARY_LENGTH:
-            summary = summary[:MAX_SUMMARY_LENGTH].rsplit('.', 1)[0] + '.'
+        if not chunks:
+            return "Error: Could not split email into chunks"
         
-        print(f" ✓ ({len(summary)} chars)")
-        return summary
+        print(f"    [Processing {len(chunks)} chunks from beginning...]")
+        
+        # Summarize each chunk with short summaries (~100 chars)
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks, 1):
+            print(f"    [Chunk {i}/{len(chunks)}: Summarizing ({len(chunk)} chars)...]", end='', flush=True)
+            chunk_summary = try_summarize(format_text(chunk, f"Chunk {i}"), max_length=CHUNK_SUMMARY_LENGTH)
+            if chunk_summary:
+                chunk_summaries.append(chunk_summary)
+                print(f" ✓ ({len(chunk_summary)} chars)")
+            else:
+                print(f" ✗")
+        
+        if not chunk_summaries:
+            return "Error: Could not generate any chunk summaries"
+        
+        # Combine chunk summaries directly with connecting text (no length cap)
+        print(f"    [Combining {len(chunk_summaries)} chunk summaries...]", end='', flush=True)
+        combined = ". ".join(chunk_summaries) + "."
+        
+        print(f" ✓ ({len(combined)} chars)")
+        return combined
     
     except Exception as e:
         print(f" ✗ (error: {str(e)[:100]})")
