@@ -83,11 +83,12 @@ def get_date_query(days_back=0):
     return f"after:{target_date.year}/{target_date.month:02d}/{target_date.day:02d} before:{(target_date + timedelta(days=1)).year}/{(target_date + timedelta(days=1)).month:02d}/{(target_date + timedelta(days=1)).day:02d}"
 
 
-def get_recent_dates_query():
-    """Get Gmail query string for today, yesterday, and day before."""
-    day_before_yesterday = date.today() - timedelta(days=2)
-    # Gmail query: after day_before_yesterday (includes today, yesterday, day before)
-    return f"after:{day_before_yesterday.year}/{day_before_yesterday.month:02d}/{day_before_yesterday.day:02d}"
+def get_todays_date_query():
+    """Get Gmail query string for today's date only."""
+    today = date.today()
+    # Gmail query: after today and before tomorrow (only today's emails)
+    tomorrow = today + timedelta(days=1)
+    return f"after:{today.year}/{today.month:02d}/{today.day:02d} before:{tomorrow.year}/{tomorrow.month:02d}/{tomorrow.day:02d}"
 
 
 def extract_email_body(message):
@@ -138,8 +139,8 @@ def get_email_headers(message):
 
 
 def fetch_todays_newsletters(service):
-    """Fetch recent emails (today, yesterday, day before) from Newsletters label."""
-    query = f"label:{LABEL_NAME} {get_recent_dates_query()}"
+    """Fetch today's emails from Newsletters label."""
+    query = f"label:{LABEL_NAME} {get_todays_date_query()}"
     
     try:
         results = service.users().messages().list(
@@ -151,10 +152,10 @@ def fetch_todays_newsletters(service):
         messages = results.get('messages', [])
         
         if not messages:
-            print(f"No newsletters found for recent days (today, yesterday, day before).")
+            print(f"No newsletters found for today.")
             return []
         
-        print(f"Found {len(messages)} newsletter(s) from recent days.")
+        print(f"Found {len(messages)} newsletter(s) from today.")
         
         # Fetch full message details
         email_data = []
@@ -315,8 +316,7 @@ def summarize_email(client, subject, from_addr, body):
     
     MAX_LENGTH = 2000  # For short emails, summarize directly
     CHUNK_SIZE = 1500  # Size of each chunk
-    NUM_CHUNKS = 6  # Number of chunks to process from the beginning
-    CHUNK_SUMMARY_LENGTH = 250  # Chunk summaries should be 200-300 chars
+    CHUNK_SUMMARY_LENGTH = 300  # Chunk summaries should be longer for better final summary
     MAX_SUMMARY_LENGTH = 600  # Cap final combined summary length
     
     def format_text(content_text, section=""):
@@ -365,15 +365,13 @@ Subject: {subject}
             print(f" ✗")
             return "Error: Could not generate summary"
         
-        # For long emails, take first 3 chunks
-        print(f"    [Long email ({len(body)} chars), taking first {NUM_CHUNKS} chunks...]")
+        # For long emails, split into chunks covering the entire email
+        print(f"    [Long email ({len(body)} chars), splitting into chunks...]")
         
-        # Split into chunks and take first NUM_CHUNKS
+        # Split into chunks covering the entire email
         chunks = []
         start = 0
-        for i in range(NUM_CHUNKS):
-            if start >= len(body):
-                break
+        while start < len(body):
             end = min(start + CHUNK_SIZE, len(body))
             chunk = body[start:end]
             if chunk.strip():
@@ -399,12 +397,54 @@ Subject: {subject}
         if not chunk_summaries:
             return "Error: Could not generate any chunk summaries"
         
-        # Combine chunk summaries directly with connecting text (no length cap)
-        print(f"    [Combining {len(chunk_summaries)} chunk summaries...]", end='', flush=True)
-        combined = ". ".join(chunk_summaries) + "."
+        # Combine chunk summaries first
+        combined_summaries = " ".join(chunk_summaries)
+        print(f"    [Creating coherent summary from {len(chunk_summaries)} chunks...]", end='', flush=True)
         
-        print(f" ✓ ({len(combined)} chars)")
-        return combined
+        # Create a final coherent summary that connects all chunks
+        final_text = f"""Email Summary
+
+From: {from_addr}
+Subject: {subject}
+
+The email covers the following topics from the beginning:
+{combined_summaries}
+
+Please provide a comprehensive, detailed, and coherent summary that is LONG and DETAILED (aim for 600-800 characters). Connect all these topics into a flowing narrative. Include all key points from each section. Make sure the summary is thorough and covers all the important information. Write a longer, more comprehensive summary."""
+        
+        final_summary = try_summarize(final_text, max_length=None)  # No cap on final summary
+        
+        # Ensure minimum length of 500 characters
+        MIN_SUMMARY_LENGTH = 500
+        if final_summary:
+            if len(final_summary) < MIN_SUMMARY_LENGTH:
+                # If too short, append chunk summaries to reach minimum length
+                print(f" ({len(final_summary)} chars, extending to at least {MIN_SUMMARY_LENGTH}...)")
+                remaining = MIN_SUMMARY_LENGTH - len(final_summary)
+                
+                # Add more detail from chunk summaries
+                additional = " ".join(chunk_summaries)
+                if len(additional) > remaining:
+                    # Take enough to reach minimum, but try to end at a sentence
+                    additional = additional[:remaining + 100].rsplit('.', 1)[0] + '.'
+                
+                final_summary = final_summary + " " + additional
+                
+                # Ensure we're at least at minimum (might be slightly over, that's fine)
+                if len(final_summary) < MIN_SUMMARY_LENGTH:
+                    # If still too short, add more
+                    more_needed = MIN_SUMMARY_LENGTH - len(final_summary)
+                    more_text = " ".join(chunk_summaries)
+                    if len(more_text) > more_needed:
+                        more_text = more_text[:more_needed + 50].rsplit('.', 1)[0] + '.'
+                    final_summary = final_summary + " " + more_text
+            
+            print(f" ✓ ({len(final_summary)} chars)")
+            return final_summary
+        else:
+            # Fallback: use combined summaries directly (should be long enough)
+            print(f" ✗ (using combined)")
+            return combined_summaries
     
     except Exception as e:
         print(f" ✗ (error: {str(e)[:100]})")
@@ -487,8 +527,8 @@ def main():
     service = get_gmail_service()
     print("Authentication successful!")
     
-    # Fetch recent newsletters (today, yesterday, day before)
-    print(f"\nFetching recent newsletters (today, yesterday, day before) from '{LABEL_NAME}' label...")
+    # Fetch today's newsletters
+    print(f"\nFetching today's newsletters from '{LABEL_NAME}' label...")
     emails = fetch_todays_newsletters(service)
     
     if not emails:
